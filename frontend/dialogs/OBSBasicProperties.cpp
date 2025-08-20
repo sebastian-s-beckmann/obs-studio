@@ -20,6 +20,7 @@
 #include <utility/display-helpers.hpp>
 #include <widgets/OBSBasic.hpp>
 
+#include <PropertiesView.hpp>
 #include <properties-view.hpp>
 #include <qt-wrappers.hpp>
 #include <vertical-scroll-area.hpp>
@@ -68,9 +69,11 @@ OBSBasicProperties::OBSBasicProperties(QWidget *parent, OBSSource source_)
 	OBSDataAutoRelease nd_settings = obs_source_get_settings(source);
 	obs_data_apply(oldSettings, nd_settings);
 
-	view = new OBSPropertiesView(nd_settings.Get(), source, (PropertiesReloadCallback)obs_source_properties,
-				     (PropertiesUpdateCallback) nullptr, // No special handling required for undo/redo
-				     (PropertiesVisualUpdateCb)obs_source_update);
+	using properties_view::PropertiesView;
+	view = new PropertiesView([this]() { return obs_source_properties(source); },
+				  [this]() { return obs_source_get_settings(source); }, source.Get(), this);
+	connect(view, &PropertiesView::settingsChanged, this,
+		[this](obs_data_t *settings) { obs_source_update(source, settings); });
 	view->setMinimumHeight(150);
 
 	ui->propertiesLayout->addWidget(view);
@@ -132,8 +135,7 @@ OBSBasicProperties::OBSBasicProperties(QWidget *parent, OBSSource source_)
 		obs_source_inc_active(sourceClone);
 		obs_transition_set(sourceClone, sourceA);
 
-		auto updateCallback = [this]() {
-			OBSDataAutoRelease settings = obs_source_get_settings(source);
+		connect(view, &PropertiesView::settingsChanged, this, [this](obs_data_t *settings) {
 			obs_source_update(sourceClone, settings);
 
 			obs_transition_clear(sourceClone);
@@ -141,9 +143,7 @@ OBSBasicProperties::OBSBasicProperties(QWidget *parent, OBSSource source_)
 			obs_transition_force_stop(sourceClone);
 
 			direction = true;
-		};
-
-		connect(view, &OBSPropertiesView::Changed, this, updateCallback);
+		});
 
 		ui->preview->show();
 		connect(ui->preview, &OBSQTDisplay::DisplayCreated, this, addTransitionDrawCallback);
@@ -242,14 +242,7 @@ void OBSBasicProperties::restoreDefaultsClicked()
 		return;
 	}
 
-	OBSDataAutoRelease settings = obs_source_get_settings(source);
-	obs_data_clear(settings);
-
-	if (!view->DeferUpdate()) {
-		obs_source_update(source, nullptr);
-	}
-
-	view->ReloadProperties();
+	view->resetPropertiesToDefaults();
 }
 
 void OBSBasicProperties::previewTransitionClicked()
@@ -288,7 +281,8 @@ void OBSBasicProperties::SourceRenamed(void *data, calldata_t *params)
 
 void OBSBasicProperties::UpdateProperties(void *data, calldata_t *)
 {
-	QMetaObject::invokeMethod(static_cast<OBSBasicProperties *>(data)->view, "ReloadProperties");
+	QMetaObject::invokeMethod(static_cast<OBSBasicProperties *>(data)->view,
+				  &properties_view::PropertiesView::updateProperties, true);
 }
 
 void OBSBasicProperties::on_buttonBox_clicked(QAbstractButton *button)
@@ -328,17 +322,13 @@ void OBSBasicProperties::on_buttonBox_clicked(QAbstractButton *button)
 		acceptClicked = true;
 		close();
 
-		if (view->DeferUpdate())
-			view->UpdateSettings();
+		if (view->isDeferredUpdate())
+			view->publishSettings();
 
 	} else if (val == QDialogButtonBox::RejectRole) {
-		OBSDataAutoRelease settings = obs_source_get_settings(source);
-		obs_data_clear(settings);
-
-		if (view->DeferUpdate())
-			obs_data_apply(settings, oldSettings);
-		else
-			obs_source_update(source, oldSettings);
+		if (!view->isDeferredUpdate()) {
+			obs_source_reset_settings(source, oldSettings);
+		}
 
 		close();
 	}
@@ -417,7 +407,7 @@ void OBSBasicProperties::Cleanup()
 
 void OBSBasicProperties::reject()
 {
-	if (!acceptClicked && (CheckSettings() != 0)) {
+	if (!acceptClicked && (view->propertiesHaveChanges())) {
 		if (!ConfirmQuit()) {
 			return;
 		}
@@ -461,15 +451,6 @@ void OBSBasicProperties::Init()
 	show();
 }
 
-int OBSBasicProperties::CheckSettings()
-{
-	OBSDataAutoRelease currentSettings = obs_source_get_settings(source);
-	const char *oldSettingsJson = obs_data_get_json(oldSettings);
-	const char *currentSettingsJson = obs_data_get_json(currentSettings);
-
-	return strcmp(currentSettingsJson, oldSettingsJson);
-}
-
 bool OBSBasicProperties::ConfirmQuit()
 {
 	QMessageBox::StandardButton button;
@@ -481,12 +462,12 @@ bool OBSBasicProperties::ConfirmQuit()
 	switch (button) {
 	case QMessageBox::Save:
 		acceptClicked = true;
-		if (view->DeferUpdate())
-			view->UpdateSettings();
+		if (view->isDeferredUpdate())
+			view->publishSettings();
 		// Do nothing because the settings are already updated
 		break;
 	case QMessageBox::Discard:
-		obs_source_update(source, oldSettings);
+		obs_source_reset_settings(source, oldSettings);
 		break;
 	case QMessageBox::Cancel:
 		return false;
