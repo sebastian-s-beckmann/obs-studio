@@ -25,12 +25,12 @@
 #include <QObject>
 #include <QDesktopServices>
 #include <QUuid>
-#include "double-slider.hpp"
 #include "spinbox-ignorewheel.hpp"
 #include "moc_properties-view.cpp"
 #include "properties-view.moc.hpp"
 
 #include <qt-wrappers.hpp>
+#include <double-slider.hpp>
 #include <plain-text-edit.hpp>
 #include <slider-ignorewheel.hpp>
 #include <IconLabel.hpp>

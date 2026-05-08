@@ -17,6 +17,10 @@ if(NOT TARGET OBS::qt-vertical-scroll-area)
   )
 endif()
 
+if(NOT TARGET OBS::qt-double-slider)
+  add_subdirectory("${CMAKE_SOURCE_DIR}/shared/qt/double-slider" "${CMAKE_BINARY_DIR}/shared/qt/double-slider")
+endif()
+
 if(NOT TARGET OBS::qt-slider-ignorewheel)
   add_subdirectory(
     "${CMAKE_SOURCE_DIR}/shared/qt/slider-ignorewheel"
@@ -34,8 +38,6 @@ add_library(OBS::properties-view ALIAS properties-view)
 target_sources(
   properties-view
   INTERFACE
-    double-slider.cpp
-    double-slider.hpp
     properties-view.cpp
     properties-view.hpp
     properties-view.moc.hpp
@@ -52,6 +54,7 @@ target_link_libraries(
     OBS::qt-wrappers
     OBS::qt-plain-text-edit
     OBS::qt-vertical-scroll-area
+    OBS::qt-double-slider
     OBS::qt-slider-ignorewheel
     OBS::qt-icon-label
     Qt::Core
